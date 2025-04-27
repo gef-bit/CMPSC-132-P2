@@ -10,14 +10,14 @@ CELL_SIZE = 14
 SPREAD_CHANCE = 0.3
 FPS = 4
 
-# States
+# States representing different states of cells
 EMPTY = 0
 TREE = 1
 FIRE = 2
 FIRE_AGE1 = 3
 BURNED = 4
 
-# Colors
+# Colors for each state (represented as RGB values)
 COLORS = {
     EMPTY: (0, 0, 0),
     TREE: (34, 139, 34),
@@ -27,7 +27,18 @@ COLORS = {
 }
 
 class Grid:
+    """
+    Represents the grid of cells in the simulation.
+    Contains methods to initialize the grid, update the grid, and simulate fire spread.
+    """
     def __init__(self, size, spread_chance=SPREAD_CHANCE+(random.random()-0.5)/10, wind_direction=random.choice(['N', 'E', 'S', 'W'])):
+        """
+        Initialize the grid and terrain for the simulation.
+
+        :param size: Size of the grid (number of cells in one row/column)
+        :param spread_chance: Probability that the fire spreads to a neighboring tree
+        :param wind_direction: Direction from which the wind blows (N, E, S, W)
+        """
         self.size = size
         self.spread_chance = spread_chance
         self.wind_direction = wind_direction
@@ -35,6 +46,11 @@ class Grid:
         self.terrain = self.create_terrain()
 
     def create_terrain(self):
+        """
+        Creates a terrain map using Perlin noise, representing elevation.
+
+        :returns: 2D numpy array of terrain elevations (scaled from 0 to 100)
+        """
         noise = PerlinNoise(octaves=6)
         terrain = np.zeros((self.size, self.size))
 
@@ -45,16 +61,23 @@ class Grid:
                 elevation = noise([nx, ny])
                 terrain[y][x] = elevation
 
-        # Normalize 0-100
+        # Normalize terrain values to range [0, 100]
         terrain = (terrain - terrain.min()) / (terrain.max() - terrain.min()) * 100
         return terrain.astype(int)
 
     def create_grid(self):
+        """
+        Initializes the grid of cells with trees and fire in the center.
+
+        :returns: 2D numpy array representing the grid of cells
+        """
         grid = np.zeros((self.size, self.size), dtype=int)
         for y in range(self.size):
             for x in range(self.size):
                 if random.random() < 0.9:
-                    grid[y][x] = TREE
+                    grid[y][x] = TREE  # Populate with trees
+
+        # Set the center area to fire
         mid = self.size // 2
         for dy in range(-1, 2):
             for dx in range(-1, 2):
@@ -63,6 +86,13 @@ class Grid:
         return grid
 
     def get_neighbors(self, y, x):
+        """
+        Gets the valid neighboring cells (up, down, left, right) of a cell.
+
+        :param y: Y-coordinate of the cell
+        :param x: X-coordinate of the cell
+        :returns: List of neighboring cell coordinates
+        """
         neighbors = []
         for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             ny, nx = y + dy, x + dx
@@ -71,27 +101,43 @@ class Grid:
         return neighbors
 
     def fire_spreads(self, y, x, ny, nx):
+        """
+        Determines if the fire will spread from a cell to a neighboring cell.
+
+        :param y: Y-coordinate of the fire's current position
+        :param x: X-coordinate of the fire's current position
+        :param ny: Y-coordinate of the neighboring cell
+        :param nx: X-coordinate of the neighboring cell
+        :returns: Boolean indicating whether fire spreads to the neighbor
+        """
         wind = {'N': (-1, 0), 'S': (1, 0), 'W': (0, -1), 'E': (0, 1)}.get(self.wind_direction, (0, 0))
         base_chance = self.spread_chance
 
-        if (ny - y, nx - x) == wind: # Wind influence
+        # Adjust spread chance based on wind direction
+        if (ny - y, nx - x) == wind:
             base_chance += 0.4
 
-        elevation_current = self.terrain[y][x] # Terrain influence
+        elevation_current = self.terrain[y][x]  # Terrain influence on fire spread
         elevation_next = self.terrain[ny][nx]
 
+        # Adjust spread chance based on elevation difference
         elevation_diff = elevation_next - elevation_current
-
         if elevation_diff > 0:
-            base_chance += 0.15 # Fire spreads faster uphill
-        elif elevation_diff < 0: 
-            base_chance -= 0.15 # Fire spreads slower downhill
+            base_chance += 0.15  # Fire spreads faster uphill
+        elif elevation_diff < 0:
+            base_chance -= 0.15  # Fire spreads slower downhill
 
-        base_chance = max(0.0, min(1.0, base_chance))  # Clamp between 0 and 1
+        base_chance = max(0.0, min(1.0, base_chance))  # Clamp the spread chance between 0 and 1
 
         return random.random() < base_chance
 
     def update(self):
+        """
+        Updates the grid by simulating fire spread and aging.
+
+        This method checks for all cells on fire, spreads the fire to neighboring trees,
+        and ages the fire (from FIRE to FIRE_AGE1 and finally BURNED).
+        """
         new_grid = self.grid.copy()
         fire_cells = np.argwhere((self.grid == FIRE) | (self.grid == FIRE_AGE1))
 
@@ -99,6 +145,7 @@ class Grid:
             return
 
         for y, x in fire_cells:
+            # Spread fire to neighbors
             for ny, nx in self.get_neighbors(y, x):
                 if self.grid[ny][nx] == TREE:
                     if self.fire_spreads(y, x, ny, nx):
@@ -113,25 +160,48 @@ class Grid:
         self.grid = new_grid
 
     def draw(self, screen):
+        """
+        Draws the grid to the screen.
+
+        :param screen: The pygame screen object to render the grid on
+        """
         for y in range(self.size):
             for x in range(self.size):
                 state = self.grid[y][x]
 
                 if state == TREE:
-                    elevation = self.terrain[y][x] # Shade tree color based on elevation
-                    brightness = int(50 + (elevation / 100) * 205) # Normalize elevation (0-100) to brightness (50-255)
+                    # Shade tree color based on terrain elevation
+                    elevation = self.terrain[y][x]
+                    brightness = int(50 + (elevation / 100) * 205)  # Normalize elevation (0-100) to brightness (50-255)
                     color = (0, brightness, 0)  # Green varying by brightness
                 else:
                     color = COLORS[state]
 
+                # Draw the cell as a rectangle
                 pygame.draw.rect(screen, color, (x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE))
 
     def set_wind_direction(self, new_direction):
+        """
+        Sets the wind direction.
+
+        :param new_direction: New wind direction ('N', 'E', 'S', 'W')
+        """
         self.wind_direction = new_direction
 
 
 class FireSimulator:
+    """
+    Handles the entire wildfire simulation process, including user interaction,
+    grid updates, fire spreading, and visualization.
+    """
     def __init__(self, grid_size, cell_size, fps):
+        """
+        Initialize the simulator.
+
+        :param grid_size: Size of the grid (number of cells)
+        :param cell_size: Size of each cell (in pixels)
+        :param fps: Frames per second for the simulation
+        """
         pygame.init()
         self.grid_size = grid_size
         self.cell_size = cell_size
@@ -143,12 +213,16 @@ class FireSimulator:
         self.grid = Grid(grid_size, SPREAD_CHANCE, self.wind_direction)
         self.running = True
 
+        # Wind change interval and other variables
         self.last_wind_change = time.time()
         self.wind_change_interval = 4  # seconds between wind changes
         self.simulation_start_time = time.time()
         self.wind_change_count = 0
 
     def draw_legend(self):
+        """
+        Draws a legend on the screen to explain what each color represents.
+        """
         font = pygame.font.Font(None, 30)
         legend_font = pygame.font.Font(None, 22)
         legend_title = font.render("Legend", True, (255, 255, 255))
@@ -170,6 +244,9 @@ class FireSimulator:
             self.screen.blit(label_text, (40, 40 + i * 30))
 
     def draw_wind_arrow(self):
+        """
+        Draws an arrow representing the current wind direction.
+        """
         center_x = self.grid_size * self.cell_size - 60
         center_y = 40
         size = 20
@@ -192,7 +269,14 @@ class FireSimulator:
         pygame.draw.polygon(self.screen, (255, 255, 0), rotated_points)
 
     def rotate_points(self, points, center, angle):
-        """Rotate points around center by angle degrees"""
+        """
+        Rotates a set of points around a center by the specified angle.
+
+        :param points: List of points to rotate
+        :param center: Center point to rotate around
+        :param angle: Angle to rotate (in degrees)
+        :returns: List of rotated points
+        """
         angle_rad = np.radians(angle)
         cos_theta, sin_theta = np.cos(angle_rad), np.sin(angle_rad)
         cx, cy = center
@@ -205,6 +289,10 @@ class FireSimulator:
         return rotated
 
     def run(self):
+        """
+        Runs the simulation, updating the grid and drawing it on the screen
+        until the fire is extinguished.
+        """
         while self.running:
             self.handle_events()
             self.update()
@@ -226,17 +314,26 @@ class FireSimulator:
             pygame.quit()
 
     def handle_events(self):
+        """
+        Handles user input events (e.g., quitting the simulation).
+        """
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
 
     def update(self):
+        """
+        Updates the grid and checks for wind direction change.
+        """
         self.grid.update()
         current_time = time.time()
         if current_time - self.last_wind_change > self.wind_change_interval:
             self.change_wind()
 
     def draw(self):
+        """
+        Clears the screen and draws the updated grid and additional information (e.g., legend, wind arrow).
+        """
         self.screen.fill((0, 0, 0))
         self.grid.draw(self.screen)
         self.draw_legend()
@@ -244,15 +341,29 @@ class FireSimulator:
         pygame.display.flip()
 
     def change_wind(self):
+        """
+        Changes the wind direction randomly and updates the grid.
+        """
         self.wind_direction = random.choice(['N', 'S', 'E', 'W'])
         self.grid.set_wind_direction(self.wind_direction)
         self.last_wind_change = time.time()
         self.wind_change_count += 1
 
     def fire_is_active(self):
+        """
+        Checks if there is still fire on the grid.
+
+        :returns: Boolean indicating whether fire is still active
+        """
         return np.any(self.grid.grid == FIRE) | np.any(self.grid.grid == FIRE_AGE1)
 
     def show_summary(self):
+        """
+        Shows a summary of the simulation after it ends, including statistics
+        like the number of trees burned, time elapsed, and wind changes.
+
+        :returns: Boolean indicating whether to restart the simulation
+        """
         total_cells = self.grid_size * self.grid_size
         trees_remaining = np.sum(self.grid.grid == TREE)
         burned_cells = np.sum(self.grid.grid == BURNED)
@@ -279,6 +390,12 @@ class FireSimulator:
         return self.draw_summary_popup(summary_lines)
 
     def draw_summary_popup(self, lines):
+        """
+        Draws a popup window displaying the simulation summary and options to restart or exit.
+        
+        :param lines: List of strings to display in the summary popup
+        :returns: Boolean indicating whether to restart the simulation
+        """
         font = pygame.font.Font(None, 36)
         small_font = pygame.font.Font(None, 28)
 
@@ -358,11 +475,15 @@ class FireSimulator:
         return restart
 
     def restart_simulation(self):
+        """
+        Restarts the simulation by resetting the grid and other parameters.
+        """
         self.grid = Grid(self.grid_size)
         self.running = True
         self.run()
 
 
 if __name__ == "__main__":
+    # Initialize and run the simulation
     sim = FireSimulator(GRID_SIZE, CELL_SIZE, FPS)
     sim.run()
